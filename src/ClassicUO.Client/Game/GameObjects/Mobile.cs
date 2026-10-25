@@ -571,6 +571,7 @@ namespace ClassicUO.Game.GameObjects
         public override void ProcessAnimation(bool evalutate = false)
         {
             ProcessSteps(out var dir, evalutate);
+            dir = SpriteDirection(dir);
             ProcessFootstepsSound();
 
             if (LastAnimationChangeTime >= Time.Ticks || NoIterateAnimIndex())
@@ -691,6 +692,38 @@ namespace ClassicUO.Game.GameObjects
             }
 
             LastAnimationChangeTime = Time.Ticks + currentDelay;
+        }
+
+        // Bodies drawn from 2D sprites (AnimationsLoader.HasNoStraightDirections) have no straight down / up
+        // view: show the diagonal on the side they already face (IsFlipped), so the sprite never turns its
+        // back or side to where it walks. A rider follows its mount's body.
+        public byte SpriteDirection(byte dir)
+        {
+            if ((dir & 3) != 3) // only 3 (down) and 7 (up)
+            {
+                return dir;
+            }
+
+            ushort body = GetGraphicForAnimation();
+
+            if (IsHuman)
+            {
+                Item mount = FindItemByLayer(Layer.Mount);
+
+                if (mount == null)
+                {
+                    return dir;
+                }
+
+                body = mount.GetGraphicForAnimation();
+            }
+
+            if (!Client.Game.UO.FileManager.Animations.HasNoStraightDirections(body))
+            {
+                return dir;
+            }
+
+            return dir == 3 ? (byte)(IsFlipped ? 2 : 4) : (byte)(IsFlipped ? 0 : 6);
         }
 
         public void ProcessSteps(out byte dir, bool evalutate = false)

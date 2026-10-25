@@ -221,6 +221,7 @@ namespace ClassicUO.Assets
         // stock ones, without rebuilding anim.mul (which the client keeps locked while it runs).
         private readonly Dictionary<ushort, string> _ourAnimations = new Dictionary<ushort, string>();
         private readonly Dictionary<ushort, byte[]> _ourAnimationData = new Dictionary<ushort, byte[]>();
+        private readonly Dictionary<ushort, bool> _noStraightDirections = new Dictionary<ushort, bool>();
 
         /// <summary>The highest body with an Animations/&lt;body&gt;.vd file, 0 when there are none.</summary>
         public int HighestOurBody { get; private set; }
@@ -229,6 +230,7 @@ namespace ClassicUO.Assets
         {
             _ourAnimations.Clear();
             _ourAnimationData.Clear();
+            _noStraightDirections.Clear();
             HighestOurBody = 0;
 
             string folder = Path.Combine(FileManager.BasePath, "Animations");
@@ -278,6 +280,36 @@ namespace ClassicUO.Assets
             }
 
             return data;
+        }
+
+        /// <summary>
+        /// True for a body of our own drawn from 2D sprites (PokeUO's Pokemon, tools/sprites_to_vd.py): its
+        /// straight-down block is the down-left one, so it has no real straight down / up view.
+        /// </summary>
+        public bool HasNoStraightDirections(ushort body)
+        {
+            if (!_ourAnimations.ContainsKey(body))
+            {
+                return false;
+            }
+
+            if (!_noStraightDirections.TryGetValue(body, out bool result))
+            {
+                byte[] vd = OurAnimation(body);
+
+                if (vd != null && vd.Length >= 4 + 2 * 12)
+                {
+                    int o0 = BitConverter.ToInt32(vd, 4), l0 = BitConverter.ToInt32(vd, 8);
+                    int o1 = BitConverter.ToInt32(vd, 16), l1 = BitConverter.ToInt32(vd, 20);
+
+                    result = o0 > 0 && o1 > 0 && l0 > 0 && l0 == l1 && o0 + l0 <= vd.Length && o1 + l1 <= vd.Length
+                        && vd.AsSpan(o0, l0).SequenceEqual(vd.AsSpan(o1, l1));
+                }
+
+                _noStraightDirections[body] = result;
+            }
+
+            return result;
         }
 
         private ReadOnlySpan<AnimationDirection> GetOurIndices(ushort body, byte[] vd, out AnimationGroupsType animType)

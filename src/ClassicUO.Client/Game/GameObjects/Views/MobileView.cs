@@ -149,6 +149,7 @@ namespace ClassicUO.Game.GameObjects
             }
 
             ProcessSteps(out byte dir);
+            dir = SpriteDirection(dir);
             byte layerDir = dir;
 
             Client.Game.UO.Animations.GetAnimDirection(ref dir, ref IsFlipped);
@@ -996,6 +997,7 @@ namespace ClassicUO.Game.GameObjects
             var animations = Client.Game.UO.Animations;
 
             ProcessSteps(out byte dir);
+            dir = SpriteDirection(dir);
             bool isFlipped = IsFlipped;
             animations.GetAnimDirection(ref dir, ref isFlipped);
 
