@@ -212,6 +212,109 @@ namespace ClassicUO.Assets
             ProcessEquipConvDef();
             ProcessBodyDef();
             ProcessCorpseDef();
+            GatherOurAnimations();
+        }
+
+        // Animations of our own: Animations/<decimal body>.vd next to the client files, one
+        // UOFiddler .vd per body, read as is. They take precedence over anim*.mul, verdata and
+        // the UOP archives, so they can add bodies past the 400 or so anim.mul slots or replace
+        // stock ones, without rebuilding anim.mul (which the client keeps locked while it runs).
+        private readonly Dictionary<ushort, string> _ourAnimations = new Dictionary<ushort, string>();
+        private readonly Dictionary<ushort, byte[]> _ourAnimationData = new Dictionary<ushort, byte[]>();
+
+        /// <summary>The highest body with an Animations/&lt;body&gt;.vd file, 0 when there are none.</summary>
+        public int HighestOurBody { get; private set; }
+
+        private void GatherOurAnimations()
+        {
+            _ourAnimations.Clear();
+            _ourAnimationData.Clear();
+            HighestOurBody = 0;
+
+            string folder = Path.Combine(FileManager.BasePath, "Animations");
+
+            if (!Directory.Exists(folder))
+            {
+                return;
+            }
+
+            foreach (string path in Directory.EnumerateFiles(folder, "*.vd"))
+            {
+                if (ushort.TryParse(Path.GetFileNameWithoutExtension(path), out ushort body) && body > 0
+                    && body < ushort.MaxValue)
+                {
+                    _ourAnimations[body] = path;
+                    HighestOurBody = Math.Max(HighestOurBody, body);
+                }
+            }
+
+            if (_ourAnimations.Count > 0)
+            {
+                Log.Trace($"{_ourAnimations.Count} animation(s) of our own");
+            }
+        }
+
+        private byte[] OurAnimation(ushort body)
+        {
+            if (!_ourAnimationData.TryGetValue(body, out var data))
+            {
+                try
+                {
+                    data = File.ReadAllBytes(_ourAnimations[body]);
+
+                    if (data.Length < 4 || BitConverter.ToInt16(data, 0) != 6)
+                    {
+                        Log.Warn($"{_ourAnimations[body]} is not an animation .vd");
+                        data = null;
+                    }
+                }
+                catch (IOException e)
+                {
+                    Log.Warn($"could not read {_ourAnimations[body]}: {e.Message}");
+                    data = null;
+                }
+
+                _ourAnimationData[body] = data;
+            }
+
+            return data;
+        }
+
+        private ReadOnlySpan<AnimationDirection> GetOurIndices(ushort body, byte[] vd, out AnimationGroupsType animType)
+        {
+            // .vd header: short 6 (anim file), short type (0 high = 22 actions, 1 low = 13,
+            // 2 people = 35), then 5 directions per action of (int offset, int length, int extra)
+            // into the .vd itself, each block laid out as in anim.mul.
+            short type = BitConverter.ToInt16(vd, 2);
+            int actions;
+
+            switch (type)
+            {
+                case 0: animType = AnimationGroupsType.Monster; actions = 22; break;
+                case 1: animType = AnimationGroupsType.Animal; actions = 13; break;
+                default: animType = AnimationGroupsType.Human; actions = 35; break;
+            }
+
+            var directions = new AnimationDirection[actions * MAX_DIRECTIONS];
+
+            for (int i = 0; i < directions.Length && 4 + i * 12 + 8 <= vd.Length; i++)
+            {
+                int offset = BitConverter.ToInt32(vd, 4 + i * 12);
+                int length = BitConverter.ToInt32(vd, 4 + i * 12 + 4);
+
+                if (offset <= 0 || length <= 0 || offset + length > vd.Length)
+                {
+                    continue;
+                }
+
+                ref var dir = ref directions[i];
+                dir.Position = (uint)offset;
+                dir.Size = (uint)length;
+                dir.CompressionType = CompressionType.None;
+                dir.LooseBody = body;
+            }
+
+            return directions;
         }
 
         public bool ReplaceBody(ref ushort body, ref ushort hue)
@@ -284,6 +387,18 @@ namespace ClassicUO.Assets
             }
 
             flags = mobInfo.Flags;
+
+            if (_ourAnimations.Count > 0 && _ourAnimations.ContainsKey(body))
+            {
+                var vd = OurAnimation(body);
+
+                if (vd != null)
+                {
+                    flags &= ~AnimationFlags.UseUopAnimation;
+
+                    return GetOurIndices(body, vd, out animType);
+                }
+            }
 
             if ((mobInfo.Flags & AnimationFlags.UseUopAnimation) != 0)
             {
@@ -1454,8 +1569,24 @@ namespace ClassicUO.Assets
             }
         }
 
-        public Span<FrameInfo> ReadMULAnimationFrames(int fileIndex, AnimationDirection index, bool isVerdata = false)
+        public Span<FrameInfo> ReadMULAnimationFrames(int fileIndex, AnimationDirection index, bool isVerdata = false, ushort looseBody = 0)
         {
+            if (looseBody != 0)
+            {
+                // a block of one of our own Animations/<body>.vd files
+                var vd = _ourAnimationData.TryGetValue(looseBody, out var d) ? d : null;
+
+                if (vd == null || index.Size == 0 || index.Position + index.Size > vd.Length)
+                {
+                    return Span<FrameInfo>.Empty;
+                }
+
+                var block = new byte[index.Size];
+                Buffer.BlockCopy(vd, (int)index.Position, block, 0, block.Length);
+
+                return ReadMULFrames(block);
+            }
+
             if (!isVerdata && (fileIndex < 0 || fileIndex >= _files.Length))
             {
                 return Span<FrameInfo>.Empty;
@@ -1485,6 +1616,11 @@ namespace ClassicUO.Assets
             var buf = new byte[index.Size];
             file.Read(buf);
 
+            return ReadMULFrames(buf);
+        }
+
+        private Span<FrameInfo> ReadMULFrames(byte[] buf)
+        {
             var reader = new StackDataReader(buf);
             var palette = MemoryMarshal.Cast<byte, ushort>(reader.Buffer.Slice(reader.Position, 512));
             reader.Skip(512);
@@ -1648,6 +1784,11 @@ namespace ClassicUO.Assets
             /// The block comes from a verdata.mul patch (FileID 6) and is not inside anim*.mul.
             /// </summary>
             public bool IsVerdata;
+
+            /// <summary>
+            /// Not 0: the block is in our own Animations/&lt;LooseBody&gt;.vd, Position is an offset in it.
+            /// </summary>
+            public ushort LooseBody;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]

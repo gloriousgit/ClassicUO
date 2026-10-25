@@ -29,7 +29,7 @@ namespace ClassicUO.Renderer.Animations
                 _cache = new AnimationDirection[Math.Max(body, MAX_ANIMATIONS_DATA_INDEX_COUNT)][][];
 
             if (body >= _cache.Length)
-                Array.Resize(ref _cache, body);
+                Array.Resize(ref _cache, body + 1);
 
             if (_cache[body] == null)
                 _cache[body] = new AnimationDirection[AnimationsLoader.MAX_ACTIONS][];
@@ -40,7 +40,8 @@ namespace ClassicUO.Renderer.Animations
             return ref _cache[body][action][dir];
         }
 
-        public int MaxAnimationCount => _dataIndex.Length;
+        // our own Animations/<body>.vd files may use bodies past the stock table
+        public int MaxAnimationCount => Math.Max(_dataIndex.Length, _animationLoader.HighestOurBody + 1);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public AnimationGroupsType GetAnimType(ushort graphic) => graphic < _dataIndex.Length ? _dataIndex[graphic]?.Type ?? 0 : 0;
@@ -202,6 +203,7 @@ namespace ClassicUO.Renderer.Animations
                                 index.Groups[i].Direction[d].Address = animIdx.Position;
                                 index.Groups[i].Direction[d].Size = /*index.FileIndex > 0 ? Math.Max(1, animIdx.Size) :*/ animIdx.Size;
                                 index.Groups[i].Direction[d].IsVerdata = animIdx.IsVerdata;
+                                index.Groups[i].Direction[d].LooseBody = animIdx.LooseBody;
                             }
                         }
 
@@ -339,7 +341,7 @@ namespace ClassicUO.Renderer.Animations
                         Size = groupObj.Direction[dir].Size,
                     };
 
-                    frames = _animationLoader.ReadMULAnimationFrames(index.FileIndex, ff, groupObj.Direction[dir].IsVerdata);
+                    frames = _animationLoader.ReadMULAnimationFrames(index.FileIndex, ff, groupObj.Direction[dir].IsVerdata, groupObj.Direction[dir].LooseBody);
                 }
 
                 if (frames.IsEmpty)
