@@ -99,12 +99,16 @@ namespace ClassicUO.Renderer.Animations
 
                     break;
 
+                // Straight down / up have no mirrored twin: reset the flip, or it keeps the previous
+                // direction's (harmless for symmetric stock art, a random flip for side-on Pokemon sprites).
                 case 3:
+                    mirror = false;
                     dir = 0;
 
                     break;
 
                 case 7:
+                    mirror = false;
                     dir = 4;
 
                     break;
